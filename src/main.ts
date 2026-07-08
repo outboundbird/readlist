@@ -1,10 +1,9 @@
 import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
 	Modal,
 	Notice,
 	Plugin,
+	Setting,
+	requestUrl,
 } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
@@ -18,72 +17,24 @@ export default class MyPlugin extends Plugin {
 	settings!: MyPluginSettings;
 
 	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
+				// Our new command: opens a popup asking for a paper URL
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
+			id: 'add-paper',
+			name: 'Add paper',
 			callback: () => {
-				new SampleModal(this.app).open();
+				new AddPaperModal(this.app).open();
 			},
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
+		// Ribbon icon in the left panel — opens the Add paper popup
+		this.addRibbonIcon('book-plus', 'Add paper', () => {
+			new AddPaperModal(this.app).open();
 		});
+
+		await this.loadSettings();
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
 	}
 
 	onunload() {}
@@ -101,14 +52,144 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
+class AddPaperModal extends Modal {
+	url = '';
+
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.setText('Woah!');
+		contentEl.createEl('h3', { text: 'Add paper' });
+
+		new Setting(contentEl)
+			.setName('Paper URL')
+			.addText((text) =>
+				text
+					.setPlaceholder('https://arxiv.org/abs/...')
+					.onChange((value) => {
+						this.url = value;
+					}),
+			);
+
+		new Setting(contentEl).addButton((btn) =>
+			btn
+				.setButtonText('Add')
+				.setCta()
+				.onClick(async () => {
+					if (!this.url) {
+						new Notice('Please paste a URL first');
+						return;
+					}
+					await this.addPaper(this.url);
+					this.close();
+				}),
+		);
+	}
+
+	// Fetch the page, derive a title + slug, and write the note
+	async addPaper(url: string) {
+		new Notice('Fetching…');
+
+		// 1. Fetch the page HTML (requestUrl bypasses CORS)
+		let title = 'Untitled';
+		let abstract = '';
+		let authors: string[] = [];
+		try {
+			const res = await requestUrl({ url });
+			// Pull the <title>...</title> text from the HTML
+			const match = res.text.match(/<title[^>]*>([^<]*)<\/title>/i);
+			if (match && match[1]) title = match[1].trim();
+			// Also try to grab the abstract
+			abstract = this.extractAbstract(res.text);
+			authors = this.extractAuthors(res.text);
+		} catch (e) {
+			new Notice('Could not fetch page; using fallback name');
+		}
+
+		// 2. Make a short slug from the title
+		const slug = this.makeSlug(title);
+
+		// 3. Ensure the Papers/ folder exists
+		const folder = 'Papers';
+		if (!this.app.vault.getAbstractFileByPath(folder)) {
+			await this.app.vault.createFolder(folder);
+		}
+
+		// 4. Build the note content
+		const today = new Date().toISOString().slice(0, 10);
+		const body = [
+			'---',
+			`url: ${url}`,
+			`title: "${title.replace(/"/g, "'")}"`,
+			`authors: [${authors.map((a) => `"${a.replace(/"/g, "'")}"`).join(', ')}]`,
+			'status: unread',
+			'tags: [paper]',
+			'---',
+			'',
+			`# ${title}`,
+			'',
+			`Added on ${today}`,
+			'',
+			'## Abstract',
+			'',
+			abstract || '_No abstract found — check the link._',
+			'',
+		].join('\n');
+
+		// 5. Create the file (avoid overwriting if it already exists)
+		let path = `${folder}/${slug}.md`;
+		if (this.app.vault.getAbstractFileByPath(path)) {
+			path = `${folder}/${slug}-${Date.now()}.md`;
+		}
+		await this.app.vault.create(path, body);
+
+		new Notice(`Saved: ${path}`);
+	}
+
+	// Turn a title into a short slug: take text before ':' if present,
+	// otherwise the first few words. Strip characters unsafe in filenames.
+	makeSlug(title: string): string {
+		const base = (title.includes(':')
+			? title.split(':')[0]
+			: title.split(/\s+/).slice(0, 3).join(' ')) ?? '';
+		const clean = base.replace(/[\\/:*?"<>|]/g, '').trim();
+		return clean || 'paper';
+	}
+
+	// Try to pull the abstract from common academic meta tags
+	extractAbstract(html: string): string {
+		// Ordered list of places to look, best first
+		const patterns = [
+			/<meta[^>]*name=["']citation_abstract["'][^>]*content=["']([^"']*)["']/i,
+			/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']*)["']/i,
+			/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i,
+		];
+		for (const re of patterns) {
+			const m = html.match(re);
+			if (m && m[1] && m[1].trim().length > 40) {
+				return this.decodeEntities(m[1].trim());
+			}
+		}
+		return '';
+	}
+
+	// Collect all citation_author meta tags
+	extractAuthors(html: string): string[] {
+		const re = /<meta[^>]*name=["']citation_author["'][^>]*content=["']([^"']*)["']/gi;
+		const authors: string[] = [];
+		let m;
+		while ((m = re.exec(html)) !== null) {
+			if (m[1]) authors.push(this.decodeEntities(m[1].trim()));
+		}
+		return authors;
+	}
+
+	// Convert HTML entities like &amp; &lt; &#39; back to normal characters
+	decodeEntities(text: string): string {
+		const el = document.createElement('textarea');
+		el.innerHTML = text;
+		return el.value;
 	}
 
 	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+		this.contentEl.empty();
 	}
 }
