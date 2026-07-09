@@ -177,6 +177,7 @@ class AddPaperModal extends Modal {
 				.join(', ')}]`,
 			'status: unread',
 			'tags: [paper]',
+			'topic: []',
 			'---',
 			'',
 			`# ${title}`,
