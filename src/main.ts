@@ -147,8 +147,12 @@ class AddPaperModal extends Modal {
 			}
 		}
 
-		// 4. Bail out if we could not find any meaningful paper info
-		if (title === 'Untitled' && authors.length === 0 && !abstract && !doi) {
+		// 4. Bail out if we could not find any meaningful paper info.
+		// Require a real title AND at least one of: authors, abstract, or DOI.
+		if (
+			title === 'Untitled' ||
+			(authors.length === 0 && !abstract && !doi)
+		) {
 			new Notice('No paper information found — note not created.');
 			return;
 		}
