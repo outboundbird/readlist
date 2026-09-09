@@ -175,6 +175,7 @@ class AddPaperModal extends Modal {
 			`authors: [${authors
 				.map((a) => `"${a.replace(/"/g, "'")}"`)
 				.join(', ')}]`,
+			`date_added: ${today}`,
 			'status: unread',
 			'tags: [paper]',
 			'topic: []',
