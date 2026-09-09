@@ -147,7 +147,13 @@ class AddPaperModal extends Modal {
 			}
 		}
 
-		// 4. Clean the title (strip site-name suffixes like "| bioRxiv")
+		// 4. Bail out if we could not find any meaningful paper info
+		if (title === 'Untitled' && authors.length === 0 && !abstract && !doi) {
+			new Notice('No paper information found — note not created.');
+			return;
+		}
+
+		// 5. Clean the title (strip site-name suffixes like "| bioRxiv")
 		title = this.cleanTitle(title);
 
 		// 5. Make a short slug from the title
