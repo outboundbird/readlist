@@ -218,9 +218,12 @@ class AddPaperModal extends Modal {
 		if (this.app.vault.getAbstractFileByPath(path)) {
 			path = `${folder}/${slug}-${Date.now()}.md`;
 		}
-		await this.app.vault.create(path, body);
+		const file = await this.app.vault.create(path, body);
 
 		new Notice(`Saved: ${path}`);
+
+		// Open the newly created note in a new tab
+		await this.app.workspace.getLeaf(true).openFile(file);
 	}
 
 	// Strip common site-name suffixes from a scraped <title>
