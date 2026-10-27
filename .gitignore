@@ -38,3 +38,6 @@ Thumbs.db
 
 # Obsidian plugin hot-reload marker
 .hotreload
+
+# VS workspace
+*.code-workspace
