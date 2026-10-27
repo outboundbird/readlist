@@ -3,6 +3,7 @@ import {
 	Notice,
 	Plugin,
 	Setting,
+	TFolder,
 	requestUrl,
 } from 'obsidian';
 import {
@@ -15,22 +16,23 @@ export default class MyPlugin extends Plugin {
 	settings!: MyPluginSettings;
 
 	async onload() {
+		await this.loadSettings();
+
 		// Command: opens a popup asking for a paper URL or DOI
 		this.addCommand({
 			id: 'add-paper',
 			name: 'Add paper',
 			callback: () => {
-				new AddPaperModal(this.app).open();
+				new AddPaperModal(this.app, this).open();
 			},
 		});
 
 		// Ribbon icon in the left panel — opens the Add paper popup
 		this.addRibbonIcon('book-plus', 'Add paper', () => {
-			new AddPaperModal(this.app).open();
+			new AddPaperModal(this.app, this).open();
 		});
 
-		await this.loadSettings();
-
+		this.addSettingTab(new SampleSettingTab(this.app, this));
 	}
 
 	onunload() {}
@@ -58,6 +60,14 @@ interface PaperMeta {
 
 class AddPaperModal extends Modal {
 	url = '';
+	folder: string;
+	plugin: MyPlugin;
+
+	constructor(app: MyPlugin['app'], plugin: MyPlugin) {
+		super(app);
+		this.plugin = plugin;
+		this.folder = plugin.settings.defaultFolder;
+	}
 
 	onOpen() {
 		const { contentEl } = this;
@@ -72,6 +82,29 @@ class AddPaperModal extends Modal {
 						this.url = value;
 					}),
 			);
+
+		// Collect existing folders in the vault for the dropdown
+		const folders = this.app.vault
+			.getAllLoadedFiles()
+			.filter((f): f is TFolder => f instanceof TFolder)
+			.map((f) => f.path)
+			.filter((p) => p !== '/')
+			.sort();
+
+		new Setting(contentEl)
+			.setName('Folder')
+			.setDesc('Where to save this note. Default is set in plugin settings.')
+			.addDropdown((drop) => {
+				// Make sure the default folder is in the list even if it doesn't exist yet
+				const options = new Set(folders);
+				options.add(this.folder);
+				for (const p of Array.from(options).sort()) {
+					drop.addOption(p, p);
+				}
+				drop.setValue(this.folder).onChange((value) => {
+					this.folder = value;
+				});
+			});
 
 		new Setting(contentEl).addButton((btn) =>
 			btn
@@ -163,8 +196,8 @@ class AddPaperModal extends Modal {
 		// 5. Make a short slug from the title
 		const slug = this.makeSlug(title);
 
-		// 6. Ensure the Papers/ folder exists
-		const folder = 'Papers';
+		// 6. Ensure the target folder exists
+		const folder = this.folder;
 		if (!this.app.vault.getAbstractFileByPath(folder)) {
 			await this.app.vault.createFolder(folder);
 		}
