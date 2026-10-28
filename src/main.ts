@@ -3,6 +3,7 @@ import {
 	Notice,
 	Plugin,
 	Setting,
+	TFile,
 	TFolder,
 	requestUrl,
 } from 'obsidian';
@@ -180,7 +181,16 @@ class AddPaperModal extends Modal {
 			}
 		}
 
-		// 4. Bail out if we could not find any meaningful paper info.
+		// 4a. Duplicate check: if a note with the same DOI or URL already
+		// exists in the destination folder (or its subfolders), open it
+		// instead of creating a new one.
+		const existing = this.findExistingPaper(doi, url, this.folder);
+		if (existing) {
+			new Notice(`Paper already in this folder: ${existing.path}`);
+			return;
+		}
+
+		// 4b. Bail out if we could not find any meaningful paper info.
 		// Require a real title AND at least one of: authors, abstract, or DOI.
 		if (
 			title === 'Untitled' ||
@@ -259,6 +269,37 @@ class AddPaperModal extends Modal {
 
 		// Open the newly created note in a new tab
 		await this.app.workspace.getLeaf(true).openFile(file);
+	}
+
+	// Search the destination folder (and its subfolders) for an existing
+	// paper note with the same DOI or URL. Uses Obsidian's metadata cache
+	// so it's cheap even on large vaults.
+	findExistingPaper(doi: string, url: string, folder: string): TFile | null {
+		const normDoi = doi.trim().toLowerCase();
+		const normUrl = url.trim();
+		if (!normDoi && !normUrl) return null;
+
+		const prefix = folder.endsWith('/') ? folder : folder + '/';
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			if (!file.path.startsWith(prefix)) continue;
+			const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+			if (!fm) continue;
+			if (
+				normDoi &&
+				typeof fm.doi === 'string' &&
+				fm.doi.trim().toLowerCase() === normDoi
+			) {
+				return file;
+			}
+			if (
+				normUrl &&
+				typeof fm.url === 'string' &&
+				fm.url.trim() === normUrl
+			) {
+				return file;
+			}
+		}
+		return null;
 	}
 
 	// Strip common site-name suffixes from a scraped <title>
